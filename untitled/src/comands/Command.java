@@ -1,7 +1,7 @@
 package src.commands;
 
 import java.util.Scanner;
-import system.RBACSystem;
+import src.system.RBACSystem;
 
 @FunctionalInterface
 public interface Command {
