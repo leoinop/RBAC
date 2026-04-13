@@ -86,7 +86,7 @@ public class ConsoleUtils {
             System.out.print(message + " (YYYY-MM-DD HH:MM:SS): ");
             String input = scanner.nextLine().trim();
 
-            if (ValidationUtils.isValidDate(input)) {
+            if (DateUtils.isValidDateTime(input)) {
                 return input;
             } else {
                 System.out.println("Error: Invalid date format. Use YYYY-MM-DD HH:MM:SS");

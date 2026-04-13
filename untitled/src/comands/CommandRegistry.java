@@ -13,6 +13,7 @@ import src.filters.RoleFilters;
 import src.utils.ConsoleUtils;
 import src.utils.ReportGenerator;
 import src.utils.FormatUtils;
+import src.utils.DateUtils;
 
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
@@ -413,6 +414,18 @@ public class CommandRegistry {
                 } else {
                     String expiresAt = ConsoleUtils.promptDate(scanner, "Expiration date");
                     boolean autoRenew = ConsoleUtils.promptYesNo(scanner, "Auto renew?");
+
+                    // Показываем предупреждение
+                    String warning = DateUtils.getExpirationWarning(expiresAt);
+                    if (warning.contains("WARNING") || warning.equals("EXPIRES TODAY")) {
+                        ConsoleUtils.printError(warning);
+                        if (!ConsoleUtils.promptYesNo(scanner, "Continue anyway?")) {
+                            return;
+                        }
+                    } else {
+                        ConsoleUtils.printInfo(warning);
+                    }
+
                     TemporaryAssignment assignment = new TemporaryAssignment(user, role, metadata, expiresAt, autoRenew);
                     system.getAssignmentManager().add(assignment);
                     system.getAuditLog().log("ROLE_ASSIGN", system.getCurrentUser(), username,
@@ -481,11 +494,24 @@ public class CommandRegistry {
             ConsoleUtils.printHeader("ASSIGNMENTS FOR " + username);
             for (RoleAssignment ra : assignments) {
                 String status = ra.isActive() ? "ACTIVE" : "INACTIVE";
-                System.out.printf("  Role: %s | Type: %s | Status: %s | Assigned by: %s at %s%n",
-                        ra.role().getName(), ra.assignmentType(), status,
+                System.out.printf("  Role: %s | Type: %s | Status: %s%n",
+                        ra.role().getName(), ra.assignmentType(), status);
+                System.out.printf("  Assigned by: %s at %s%n",
                         ra.metadata().assignedBy(), ra.metadata().assignedAt());
+
+                if (ra instanceof TemporaryAssignment temp) {
+                    String relativeTime = DateUtils.formatRelativeTime(temp.getExpiresAt());
+                    String warning = DateUtils.getExpirationWarning(temp.getExpiresAt());
+                    System.out.printf("  Expires: %s (%s)%n", temp.getExpiresAt(), relativeTime);
+                    if (warning.contains("WARNING") || warning.equals("EXPIRED")) {
+                        ConsoleUtils.printError("  " + warning);
+                    } else {
+                        System.out.printf("  %s%n", warning);
+                    }
+                }
+
                 if (ra.metadata().reason() != null && !ra.metadata().reason().isEmpty()) {
-                    System.out.printf("    Reason: %s%n", ra.metadata().reason());
+                    System.out.printf("  Reason: %s%n", ra.metadata().reason());
                 }
                 System.out.println();
             }
