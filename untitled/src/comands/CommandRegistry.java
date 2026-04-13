@@ -32,15 +32,10 @@ public class CommandRegistry {
     }
 
     private void registerAllCommands() {
-        // Команды управления пользователями
         registerUserCommands();
-        // Команды управления ролями
         registerRoleCommands();
-        // Команды управления назначениями
         registerAssignmentCommands();
-        // Команды просмотра прав
         registerPermissionCommands();
-        // Служебные команды
         registerUtilityCommands();
     }
 
@@ -68,6 +63,8 @@ public class CommandRegistry {
             try {
                 User user = User.validate(username, fullName, email);
                 system.getUserManager().add(user);
+                system.getAuditLog().log("USER_CREATE", system.getCurrentUser(), username,
+                        "Full name: " + fullName + ", Email: " + email);
                 System.out.println("User created successfully!");
             } catch (IllegalArgumentException e) {
                 System.out.println("Error: " + e.getMessage());
@@ -122,6 +119,8 @@ public class CommandRegistry {
                 system.getUserManager().update(username,
                         fullName.isEmpty() ? null : fullName,
                         email.isEmpty() ? null : email);
+                system.getAuditLog().log("USER_UPDATE", system.getCurrentUser(), username,
+                        "New full name: " + fullName + ", New email: " + email);
                 System.out.println("User updated successfully!");
             } catch (IllegalArgumentException e) {
                 System.out.println("Error: " + e.getMessage());
@@ -147,13 +146,14 @@ public class CommandRegistry {
             }
 
             User user = userOpt.get();
-            // Удаляем все назначения пользователя
             List<RoleAssignment> assignments = system.getAssignmentManager().findByUser(user);
             for (RoleAssignment ra : assignments) {
                 system.getAssignmentManager().remove(ra);
             }
 
             system.getUserManager().remove(user);
+            system.getAuditLog().log("USER_DELETE", system.getCurrentUser(), username,
+                    "Deleted user with " + assignments.size() + " assignments");
             System.out.println("User deleted successfully!");
         });
 
@@ -230,6 +230,8 @@ public class CommandRegistry {
             try {
                 Role role = new Role(name, desc);
                 system.getRoleManager().add(role);
+                system.getAuditLog().log("ROLE_CREATE", system.getCurrentUser(), name,
+                        "Description: " + desc);
                 System.out.println("Role created successfully!");
 
                 System.out.print("Add permissions? (yes/no): ");
@@ -246,6 +248,8 @@ public class CommandRegistry {
                         try {
                             Permission perm = new Permission(permName, resource, permDesc);
                             system.getRoleManager().addPermissionToRole(name, perm);
+                            system.getAuditLog().log("PERMISSION_ADD", system.getCurrentUser(), name,
+                                    "Permission: " + permName + " on " + resource);
                             System.out.println("Permission added!");
                         } catch (Exception e) {
                             System.out.println("Error: " + e.getMessage());
@@ -286,8 +290,12 @@ public class CommandRegistry {
             System.out.print("New description (leave empty to keep): ");
             String newDesc = scanner.nextLine();
 
+            String oldName = role.getName();
             if (!newName.isEmpty()) role.setName(newName);
             if (!newDesc.isEmpty()) role.setDescription(newDesc);
+
+            system.getAuditLog().log("ROLE_UPDATE", system.getCurrentUser(), name,
+                    "New name: " + newName + ", New description: " + newDesc);
             System.out.println("Role updated!");
         });
 
@@ -317,6 +325,8 @@ public class CommandRegistry {
             }
 
             system.getRoleManager().remove(role);
+            system.getAuditLog().log("ROLE_DELETE", system.getCurrentUser(), name,
+                    "Deleted role with " + assignments.size() + " assignments");
             System.out.println("Role deleted!");
         });
 
@@ -333,6 +343,8 @@ public class CommandRegistry {
             try {
                 Permission perm = new Permission(permName, resource, desc);
                 system.getRoleManager().addPermissionToRole(roleName, perm);
+                system.getAuditLog().log("PERMISSION_ADD", system.getCurrentUser(), roleName,
+                        "Permission: " + permName + " on " + resource);
                 System.out.println("Permission added to role!");
             } catch (Exception e) {
                 System.out.println("Error: " + e.getMessage());
@@ -366,7 +378,10 @@ public class CommandRegistry {
             int idx = Integer.parseInt(scanner.nextLine()) - 1;
 
             if (idx >= 0 && idx < perms.size()) {
-                system.getRoleManager().removePermissionFromRole(roleName, perms.get(idx));
+                Permission removed = perms.get(idx);
+                system.getRoleManager().removePermissionFromRole(roleName, removed);
+                system.getAuditLog().log("PERMISSION_REMOVE", system.getCurrentUser(), roleName,
+                        "Permission: " + removed.name() + " on " + removed.resource());
                 System.out.println("Permission removed!");
             }
         });
@@ -450,6 +465,8 @@ public class CommandRegistry {
                 if (type.equalsIgnoreCase("permanent")) {
                     PermanentAssignment assignment = new PermanentAssignment(user, role, metadata);
                     system.getAssignmentManager().add(assignment);
+                    system.getAuditLog().log("ROLE_ASSIGN", system.getCurrentUser(), username,
+                            "Role: " + role.getName() + ", Type: permanent, Reason: " + reason);
                 } else if (type.equalsIgnoreCase("temporary")) {
                     System.out.print("Expiration date (yyyy-MM-dd HH:mm:ss): ");
                     String expiresAt = scanner.nextLine();
@@ -457,6 +474,8 @@ public class CommandRegistry {
                     boolean autoRenew = scanner.nextLine().equalsIgnoreCase("yes");
                     TemporaryAssignment assignment = new TemporaryAssignment(user, role, metadata, expiresAt, autoRenew);
                     system.getAssignmentManager().add(assignment);
+                    system.getAuditLog().log("ROLE_ASSIGN", system.getCurrentUser(), username,
+                            "Role: " + role.getName() + ", Type: temporary, Expires: " + expiresAt + ", Reason: " + reason);
                 } else {
                     System.out.println("Invalid type");
                     return;
@@ -496,7 +515,10 @@ public class CommandRegistry {
             System.out.print("Select assignment to revoke (number): ");
             int idx = Integer.parseInt(scanner.nextLine()) - 1;
             if (idx >= 0 && idx < assignments.size()) {
-                system.getAssignmentManager().revokeAssignment(assignments.get(idx).assignmentId());
+                RoleAssignment ra = assignments.get(idx);
+                system.getAssignmentManager().revokeAssignment(ra.assignmentId());
+                system.getAuditLog().log("ROLE_REVOKE", system.getCurrentUser(), username,
+                        "Role: " + ra.role().getName());
                 System.out.println("Assignment revoked!");
             }
         });
@@ -532,11 +554,8 @@ public class CommandRegistry {
             for (RoleAssignment ra : assignments) {
                 String status = ra.isActive() ? "ACTIVE" : "INACTIVE";
                 System.out.printf("  Role: %s | Type: %s | Status: %s | Assigned by: %s at %s%n",
-                        ra.role().getName(),
-                        ra.assignmentType(),
-                        status,
-                        ra.metadata().assignedBy(),
-                        ra.metadata().assignedAt());
+                        ra.role().getName(), ra.assignmentType(), status,
+                        ra.metadata().assignedBy(), ra.metadata().assignedAt());
                 if (ra.metadata().reason() != null && !ra.metadata().reason().isEmpty()) {
                     System.out.printf("    Reason: %s%n", ra.metadata().reason());
                 }
@@ -615,6 +634,10 @@ public class CommandRegistry {
 
         parser.registerCommand("stats", "Show system statistics", (scanner, system) -> {
             System.out.println(system.generateStatistics());
+        });
+
+        parser.registerCommand("audit-log", "Show audit log", (scanner, system) -> {
+            system.getAuditLog().printLog();
         });
 
         parser.registerCommand("clear", "Clear the screen", (scanner, system) -> {
