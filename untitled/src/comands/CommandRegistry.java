@@ -12,6 +12,7 @@ import src.filters.UserFilters;
 import src.filters.RoleFilters;
 import src.utils.ConsoleUtils;
 import src.utils.ReportGenerator;
+import src.utils.FormatUtils;
 
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
@@ -42,15 +43,20 @@ public class CommandRegistry {
     private void registerUserCommands() {
         parser.registerCommand("user-list", "List all users", (scanner, system) -> {
             List<User> users = system.getUserManager().findAll();
-            ConsoleUtils.printHeader("USERS");
-            ConsoleUtils.printTableRow("Username", "Full Name", "Email");
-            ConsoleUtils.printSeparator();
+
+            String[] headers = {"Username", "Full Name", "Email"};
+            List<String[]> rows = new ArrayList<>();
+
             for (User user : users) {
-                System.out.printf("%-20s %-25s %-30s%n",
-                        user.username(), user.fullName(), user.email());
+                rows.add(new String[]{
+                        user.username(),
+                        FormatUtils.truncate(user.fullName(), 25),
+                        user.email()
+                });
             }
-            ConsoleUtils.printSeparator();
-            System.out.printf("Total: %d users%n", users.size());
+
+            System.out.println(FormatUtils.formatTable(headers, rows));
+            System.out.println("Total: " + users.size() + " users");
         });
 
         parser.registerCommand("user-create", "Create new user", (scanner, system) -> {
@@ -189,16 +195,20 @@ public class CommandRegistry {
     private void registerRoleCommands() {
         parser.registerCommand("role-list", "List all roles", (scanner, system) -> {
             List<Role> roles = system.getRoleManager().findAll();
-            ConsoleUtils.printHeader("ROLES");
-            ConsoleUtils.printTableRow("Name", "Permissions", "ID");
-            ConsoleUtils.printSeparator();
+
+            String[] headers = {"Name", "Permissions", "ID"};
+            List<String[]> rows = new ArrayList<>();
+
             for (Role role : roles) {
-                System.out.printf("%-25s %-10d %-15s%n",
-                        role.getName(), role.getPermissions().size(),
-                        role.getId().substring(0, Math.min(8, role.getId().length())));
+                rows.add(new String[]{
+                        role.getName(),
+                        String.valueOf(role.getPermissions().size()),
+                        FormatUtils.truncate(role.getId(), 12)
+                });
             }
-            ConsoleUtils.printSeparator();
-            System.out.printf("Total: %d roles%n", roles.size());
+
+            System.out.println(FormatUtils.formatTable(headers, rows));
+            System.out.println("Total: " + roles.size() + " roles");
         });
 
         parser.registerCommand("role-create", "Create new role", (scanner, system) -> {

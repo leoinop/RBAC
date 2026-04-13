@@ -19,13 +19,15 @@ public class ReportGenerator {
 
     public static String generateUserReport(UserManager userManager, AssignmentManager assignmentManager) {
         StringBuilder sb = new StringBuilder();
-        sb.append("\n========== USER REPORT ==========\n\n");
+        sb.append(FormatUtils.formatHeader("USER REPORT"));
+        sb.append("\n\n");
 
         List<User> users = userManager.findAll();
 
         for (User user : users) {
-            sb.append(String.format("User: %s (%s)\n", user.username(), user.fullName()));
-            sb.append(String.format("Email: %s\n", user.email()));
+            sb.append(FormatUtils.formatBox("User: " + user.username())).append("\n");
+            sb.append(FormatUtils.formatKeyValue("Full Name", user.fullName())).append("\n");
+            sb.append(FormatUtils.formatKeyValue("Email", user.email())).append("\n");
 
             List<RoleAssignment> assignments = assignmentManager.findByUser(user);
             if (assignments.isEmpty()) {
@@ -41,27 +43,40 @@ public class ReportGenerator {
             sb.append("\n");
         }
 
+        sb.append(FormatUtils.formatSeparator()).append("\n");
         sb.append(String.format("Total users: %d\n", users.size()));
-        sb.append("==================================\n");
         return sb.toString();
     }
 
     public static String generateRoleReport(RoleManager roleManager, AssignmentManager assignmentManager) {
         StringBuilder sb = new StringBuilder();
-        sb.append("\n========== ROLE REPORT ==========\n\n");
+        sb.append(FormatUtils.formatHeader("ROLE REPORT"));
+        sb.append("\n\n");
 
         List<Role> roles = roleManager.findAll();
 
-        for (Role role : roles) {
-            sb.append(String.format("Role: %s\n", role.getName()));
-            sb.append(String.format("Description: %s\n", role.getDescription()));
-            sb.append(String.format("Permissions: %d\n", role.getPermissions().size()));
+        String[] headers = {"Role", "Permissions", "Users", "Active"};
+        List<String[]> rows = new ArrayList<>();
 
+        for (Role role : roles) {
             List<RoleAssignment> assignments = assignmentManager.findByRole(role);
             long activeCount = assignments.stream().filter(RoleAssignment::isActive).count();
 
-            sb.append(String.format("Assigned to: %d users (%d active)\n", assignments.size(), activeCount));
+            rows.add(new String[]{
+                    role.getName(),
+                    String.valueOf(role.getPermissions().size()),
+                    String.valueOf(assignments.size()),
+                    String.valueOf(activeCount)
+            });
+        }
 
+        sb.append(FormatUtils.formatTable(headers, rows)).append("\n\n");
+
+        for (Role role : roles) {
+            sb.append(FormatUtils.formatBox("Role: " + role.getName())).append("\n");
+            sb.append(FormatUtils.formatKeyValue("Description", role.getDescription())).append("\n");
+
+            List<RoleAssignment> assignments = assignmentManager.findByRole(role);
             if (!assignments.isEmpty()) {
                 sb.append("Users with this role:\n");
                 for (RoleAssignment ra : assignments) {
@@ -72,14 +87,15 @@ public class ReportGenerator {
             sb.append("\n");
         }
 
+        sb.append(FormatUtils.formatSeparator()).append("\n");
         sb.append(String.format("Total roles: %d\n", roles.size()));
-        sb.append("=================================\n");
         return sb.toString();
     }
 
     public static String generatePermissionMatrix(UserManager userManager, AssignmentManager assignmentManager) {
         StringBuilder sb = new StringBuilder();
-        sb.append("\n========== PERMISSION MATRIX ==========\n\n");
+        sb.append(FormatUtils.formatHeader("PERMISSION MATRIX"));
+        sb.append("\n\n");
 
         List<User> users = userManager.findAll();
 
@@ -100,37 +116,64 @@ public class ReportGenerator {
         List<String> sortedResources = new ArrayList<>(allResources);
         Collections.sort(sortedResources);
 
-        sb.append(String.format("%-20s", "User"));
-        for (String resource : sortedResources) {
-            sb.append(String.format(" | %-15s", resource));
+        String[] headers = new String[sortedResources.size() + 1];
+        headers[0] = "User";
+        for (int i = 0; i < sortedResources.size(); i++) {
+            headers[i + 1] = sortedResources.get(i);
         }
-        sb.append("\n");
 
+        List<String[]> rows = new ArrayList<>();
         for (User user : users) {
-            sb.append(String.format("%-20s", user.username()));
+            String[] row = new String[sortedResources.size() + 1];
+            row[0] = user.username();
 
-            for (String resource : sortedResources) {
+            for (int i = 0; i < sortedResources.size(); i++) {
+                String resource = sortedResources.get(i);
                 Set<String> perms = userPermissions.get(user.username());
                 if (perms != null) {
                     List<String> userResourcePerms = perms.stream()
                             .filter(p -> p.endsWith(":" + resource))
                             .map(p -> p.split(":")[0])
                             .collect(Collectors.toList());
-
-                    if (userResourcePerms.isEmpty()) {
-                        sb.append(String.format(" | %-15s", "-"));
-                    } else {
-                        sb.append(String.format(" | %-15s", String.join(",", userResourcePerms)));
-                    }
+                    row[i + 1] = userResourcePerms.isEmpty() ? "-" : String.join(",", userResourcePerms);
                 } else {
-                    sb.append(String.format(" | %-15s", "-"));
+                    row[i + 1] = "-";
                 }
             }
-            sb.append("\n");
+            rows.add(row);
         }
 
-        sb.append("\nLegend: READ, WRITE, DELETE, MANAGE, etc.\n");
-        sb.append("========================================\n");
+        sb.append(FormatUtils.formatTable(headers, rows));
+        sb.append("\n\nLegend: READ, WRITE, DELETE, MANAGE, etc.\n");
+        return sb.toString();
+    }
+
+    public static String generateCompactUserReport(UserManager userManager, AssignmentManager assignmentManager) {
+        StringBuilder sb = new StringBuilder();
+
+        List<User> users = userManager.findAll();
+
+        String[] headers = {"Username", "Full Name", "Email", "Roles"};
+        List<String[]> rows = new ArrayList<>();
+
+        for (User user : users) {
+            List<RoleAssignment> assignments = assignmentManager.findByUser(user);
+            String rolesStr = assignments.stream()
+                    .map(ra -> ra.role().getName())
+                    .collect(Collectors.joining(", "));
+            if (rolesStr.isEmpty()) {
+                rolesStr = "-";
+            }
+
+            rows.add(new String[]{
+                    user.username(),
+                    FormatUtils.truncate(user.fullName(), 20),
+                    user.email(),
+                    FormatUtils.truncate(rolesStr, 30)
+            });
+        }
+
+        sb.append(FormatUtils.formatTable(headers, rows));
         return sb.toString();
     }
 
