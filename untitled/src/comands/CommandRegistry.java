@@ -12,6 +12,7 @@ import src.filters.UserFilters;
 import src.filters.RoleFilters;
 import src.filters.AssignmentFilters;
 import src.sorters.UserSorters;
+import src.utils.ReportGenerator;
 
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
@@ -632,6 +633,50 @@ public class CommandRegistry {
             parser.printHelp();
         });
 
+        parser.registerCommand("report-users", "Generate user report", (scanner, system) -> {
+            String report = ReportGenerator.generateUserReport(
+                    system.getUserManager(),
+                    system.getAssignmentManager()
+            );
+            System.out.println(report);
+
+            System.out.print("Save to file? (yes/no): ");
+            if (scanner.nextLine().equalsIgnoreCase("yes")) {
+                System.out.print("Filename: ");
+                String filename = scanner.nextLine();
+                ReportGenerator.exportToFile(report, filename);
+            }
+        });
+
+        parser.registerCommand("report-roles", "Generate role report", (scanner, system) -> {
+            String report = ReportGenerator.generateRoleReport(
+                    system.getRoleManager(),
+                    system.getAssignmentManager()
+            );
+            System.out.println(report);
+
+            System.out.print("Save to file? (yes/no): ");
+            if (scanner.nextLine().equalsIgnoreCase("yes")) {
+                System.out.print("Filename: ");
+                String filename = scanner.nextLine();
+                ReportGenerator.exportToFile(report, filename);
+            }
+        });
+
+        parser.registerCommand("report-matrix", "Generate permission matrix", (scanner, system) -> {
+            String report = ReportGenerator.generatePermissionMatrix(
+                    system.getUserManager(),
+                    system.getAssignmentManager()
+            );
+            System.out.println(report);
+
+            System.out.print("Save to file? (yes/no): ");
+            if (scanner.nextLine().equalsIgnoreCase("yes")) {
+                System.out.print("Filename: ");
+                String filename = scanner.nextLine();
+                ReportGenerator.exportToFile(report, filename);
+            }
+        });
         parser.registerCommand("stats", "Show system statistics", (scanner, system) -> {
             System.out.println(system.generateStatistics());
         });
