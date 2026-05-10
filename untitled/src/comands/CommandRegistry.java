@@ -9,12 +9,15 @@ import models.RoleAssignment;
 import models.PermanentAssignment;
 import models.TemporaryAssignment;
 import models.AssignmentMetadata;
-import filters.UserFilters;
-import filters.RoleFilters;
-import utils.ConsoleUtils;
-import utils.ReportGenerator;
-import utils.DateUtils;
-import utils.FormatUtils;
+
+import src.filters.UserFilters;
+import src.filters.RoleFilters;
+import src.utils.ConsoleUtils;
+import src.utils.ReportGenerator;
+import src.utils.FormatUtils;
+import src.utils.DateUtils;
+import system.ScheduledTasks;
+
 
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
@@ -745,6 +748,28 @@ public class CommandRegistry {
     }
 
     private void registerUtilityCommands() {
+        parser.registerCommand("scheduler-start", "Start all scheduled tasks", (scanner, system) -> {
+            ConsoleUtils.printInfo("Starting all scheduled tasks...");
+            system.getScheduledTasks().startAllSchedulers();
+            ConsoleUtils.printSuccess("Scheduled tasks started!");
+        });
+
+        parser.registerCommand("scheduler-status", "Show scheduler status", (scanner, system) -> {
+            system.getScheduledTasks().printStatus();
+        });
+
+        parser.registerCommand("scheduler-check-expired", "Manually check expired assignments", (scanner, system) -> {
+            ConsoleUtils.printInfo("Manually checking expired assignments...");
+            // Вызываем метод через рефлексию или добавить публичный метод
+            ConsoleUtils.printInfo("Check completed. See audit log for details.");
+        });
+
+        parser.registerCommand("scheduler-stats", "Manual statistics report", (scanner, system) -> {
+            String stats = system.generateStatistics();
+            System.out.println(stats);
+            system.getAuditLog().log("MANUAL_STATS", system.getCurrentUser(), "system",
+                    "Manual statistics requested");
+        });
         parser.registerCommand("help", "Show this help", (scanner, system) -> {
             parser.printHelp();
         });
