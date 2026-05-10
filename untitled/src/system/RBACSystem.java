@@ -1,15 +1,9 @@
-package src.system;
+package system;
 
-import src.utils.AuditLog;
-import src.managers.*;
-import models.User;
-import models.Role;
-import models.Permission;
-import models.RoleAssignment;
-import models.PermanentAssignment;
-import models.TemporaryAssignment;
-import models.AssignmentMetadata;
-import models.AbstractRoleAssignment;
+import managers.*;
+import models.*;
+import utils.AuditLog;
+
 import java.util.*;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
@@ -18,20 +12,19 @@ public class RBACSystem {
     private final UserManager userManager;
     private final RoleManager roleManager;
     private final AssignmentManager assignmentManager;
-    private String currentUser;
     private final AuditLog auditLog;
+    private final BackgroundExecutor backgroundExecutor;
+    private String currentUser;
 
     public RBACSystem() {
         this.userManager = new UserManager();
         this.assignmentManager = new AssignmentManager(userManager, null);
         this.roleManager = new RoleManager(assignmentManager);
         this.auditLog = new AuditLog();
+        this.backgroundExecutor = new BackgroundExecutor();
         this.currentUser = "system";
     }
 
-    public AuditLog getAuditLog() {
-        return auditLog;
-    }
     public UserManager getUserManager() {
         return userManager;
     }
@@ -42,6 +35,14 @@ public class RBACSystem {
 
     public AssignmentManager getAssignmentManager() {
         return assignmentManager;
+    }
+
+    public AuditLog getAuditLog() {
+        return auditLog;
+    }
+
+    public BackgroundExecutor getBackgroundExecutor() {
+        return backgroundExecutor;
     }
 
     public void setCurrentUser(String username) {
@@ -129,8 +130,8 @@ public class RBACSystem {
 
         // Топ-3 самых популярных ролей
         Map<String, Integer> roleCounts = new HashMap<>();
-        for (RoleAssignment assignment : assignmentManager.findAll()) {
-            String roleName = assignment.role().getName();
+        for (RoleAssignment ra : assignmentManager.findAll()) {
+            String roleName = ra.role().getName();
             roleCounts.put(roleName, roleCounts.getOrDefault(roleName, 0) + 1);
         }
 
@@ -142,5 +143,11 @@ public class RBACSystem {
 
         sb.append("=============================================\n");
         return sb.toString();
+    }
+
+    public void shutdown() {
+        if (backgroundExecutor != null) {
+            backgroundExecutor.shutdown();
+        }
     }
 }
