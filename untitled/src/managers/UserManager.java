@@ -1,89 +1,189 @@
-package managers;
-
+package src.managers;
 import models.User;
-import filters.UserFilter;
-import repository.Repository;
+import src.filters.UserFilter;
+import src.repositories.Repository;
 
 import java.util.*;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.locks.ReentrantReadWriteLock;
 import java.util.stream.Collectors;
 
 public class UserManager implements Repository<User> {
+    private final Map<String, User> usersByUsername;
+    private final ReentrantReadWriteLock lock;
 
-    private final Map<String, User> users = new HashMap<>();
+    public UserManager() {
+        this.usersByUsername = new ConcurrentHashMap<>();
+        this.lock = new ReentrantReadWriteLock();
+    }
 
-    // Метод репозитория
     @Override
     public void add(User user) {
-        if (user == null)
-            throw new IllegalArgumentException("User не может быть пустой");
+        if (user == null) {
+            throw new IllegalArgumentException("User cannot be null");
+        }
 
-        if (users.containsKey(user.username()))
-            throw new IllegalArgumentException("User уже есть: " + user.username());
+        String username = user.username();
 
-        users.put(user.username(), user);
+        lock.writeLock().lock();
+        try {
+            if (usersByUsername.containsKey(username)) {
+                throw new IllegalArgumentException("User with username '" + username + "' already exists");
+            }
+            usersByUsername.put(username, user);
+        } finally {
+            lock.writeLock().unlock();
+        }
     }
 
     @Override
     public boolean remove(User user) {
-        return users.remove(user.username()) != null;
+        if (user == null) {
+            return false;
+        }
+
+        lock.writeLock().lock();
+        try {
+            return usersByUsername.remove(user.username()) != null;
+        } finally {
+            lock.writeLock().unlock();
+        }
     }
 
     @Override
-    public Optional<User> findById(String username) {
-        return Optional.ofNullable(users.get(username));
+    public Optional<User> findById(String id) {
+        return findByUsername(id);
     }
 
     @Override
     public List<User> findAll() {
-        return new ArrayList<>(users.values());
+        lock.readLock().lock();
+        try {
+            return new ArrayList<>(usersByUsername.values());
+        } finally {
+            lock.readLock().unlock();
+        }
     }
 
     @Override
     public int count() {
-        return users.size();
+        lock.readLock().lock();
+        try {
+            return usersByUsername.size();
+        } finally {
+            lock.readLock().unlock();
+        }
     }
 
     @Override
     public void clear() {
-        users.clear();
+        lock.writeLock().lock();
+        try {
+            usersByUsername.clear();
+        } finally {
+            lock.writeLock().unlock();
+        }
     }
 
-    // Доп методы
     public Optional<User> findByUsername(String username) {
-        return Optional.ofNullable(users.get(username));
+        if (username == null) {
+            return Optional.empty();
+        }
+
+        lock.readLock().lock();
+        try {
+            return Optional.ofNullable(usersByUsername.get(username));
+        } finally {
+            lock.readLock().unlock();
+        }
     }
 
     public Optional<User> findByEmail(String email) {
-        return users.values().stream()
-                .filter(u -> u.email().equals(email))
-                .findFirst();
+        if (email == null) {
+            return Optional.empty();
+        }
+
+        lock.readLock().lock();
+        try {
+            return usersByUsername.values().stream()
+                    .filter(user -> user.email().equals(email))
+                    .findFirst();
+        } finally {
+            lock.readLock().unlock();
+        }
     }
 
     public List<User> findByFilter(UserFilter filter) {
-        return users.values().stream()
-                .filter(filter::test)
-                .collect(Collectors.toList());
+        if (filter == null) {
+            return findAll();
+        }
+
+        lock.readLock().lock();
+        try {
+            return usersByUsername.values().stream()
+                    .filter(filter::test)
+                    .collect(Collectors.toList());
+        } finally {
+            lock.readLock().unlock();
+        }
+    }
+
+    public List<User> findByFilterParallel(UserFilter filter) {
+        if (filter == null) {
+            return findAll();
+        }
+
+        lock.readLock().lock();
+        try {
+            return usersByUsername.values().parallelStream()
+                    .filter(filter::test)
+                    .collect(Collectors.toList());
+        } finally {
+            lock.readLock().unlock();
+        }
     }
 
     public List<User> findAll(UserFilter filter, Comparator<User> sorter) {
-        return users.values().stream()
-                .filter(filter::test)
-                .sorted(sorter)
-                .collect(Collectors.toList());
+        List<User> result = findByFilter(filter);
+        if (sorter != null) {
+            result.sort(sorter);
+        }
+        return result;
     }
 
     public boolean exists(String username) {
-        return users.containsKey(username);
+        if (username == null) {
+            return false;
+        }
+
+        lock.readLock().lock();
+        try {
+            return usersByUsername.containsKey(username);
+        } finally {
+            lock.readLock().unlock();
+        }
     }
 
     public void update(String username, String newFullName, String newEmail) {
-        User existing = users.get(username);
+        if (username == null) {
+            throw new IllegalArgumentException("Username cannot be null");
+        }
 
-        if (existing == null)
-            throw new NoSuchElementException("User не найден: " + username);
+        lock.writeLock().lock();
+        try {
+            User existingUser = usersByUsername.get(username);
+            if (existingUser == null) {
+                throw new IllegalArgumentException("User with username '" + username + "' not found");
+            }
 
-        User updated = User.validate(username, newFullName, newEmail);
+            String updatedFullName = newFullName != null ? newFullName : existingUser.fullName();
+            String updatedEmail = newEmail != null ? newEmail : existingUser.email();
 
-        users.put(username, updated);
+            User updatedUser = User.validate(username, updatedFullName, updatedEmail);
+            usersByUsername.put(username, updatedUser);
+        } finally {
+            lock.writeLock().unlock();
+        }
     }
 }

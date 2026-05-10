@@ -14,6 +14,7 @@ public class RBACSystem {
     private final AssignmentManager assignmentManager;
     private final AuditLog auditLog;
     private final BackgroundExecutor backgroundExecutor;
+
     private final ScheduledTasks scheduledTasks;
     private String currentUser;
 
@@ -23,7 +24,9 @@ public class RBACSystem {
         this.roleManager = new RoleManager(assignmentManager);
         this.auditLog = new AuditLog();
         this.backgroundExecutor = new BackgroundExecutor();
+
         this.scheduledTasks = new ScheduledTasks(this);
+
         this.currentUser = "system";
     }
 
@@ -46,6 +49,7 @@ public class RBACSystem {
     public BackgroundExecutor getBackgroundExecutor() {
         return backgroundExecutor;
     }
+
 
     public ScheduledTasks getScheduledTasks() {
         return scheduledTasks;

@@ -1,6 +1,7 @@
-package src.commands;
+package commands;
 
-import src.system.RBACSystem;
+import system.RBACSystem;
+import system.BackgroundExecutor;
 import models.User;
 import models.Role;
 import models.Permission;
@@ -8,6 +9,7 @@ import models.RoleAssignment;
 import models.PermanentAssignment;
 import models.TemporaryAssignment;
 import models.AssignmentMetadata;
+
 import src.filters.UserFilters;
 import src.filters.RoleFilters;
 import src.utils.ConsoleUtils;
@@ -15,6 +17,7 @@ import src.utils.ReportGenerator;
 import src.utils.FormatUtils;
 import src.utils.DateUtils;
 import system.ScheduledTasks;
+
 
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
@@ -40,6 +43,170 @@ public class CommandRegistry {
         registerAssignmentCommands();
         registerPermissionCommands();
         registerUtilityCommands();
+        registerAsyncCommands();
+    }
+
+    private void registerAsyncCommands() {
+        parser.registerCommand("report-users-async", "Generate user report in background", (scanner, system) -> {
+            ConsoleUtils.printInfo("Starting background user report generation...");
+
+            system.getBackgroundExecutor().submit(() -> {
+                try {
+                    String report = ReportGenerator.generateUserReportParallel(
+                            system.getUserManager(),
+                            system.getAssignmentManager()
+                    );
+
+                    System.out.println("\n[Background] Report generated:");
+                    System.out.println(report);
+
+                    system.getAuditLog().log("REPORT_GENERATED", system.getCurrentUser(), "users",
+                            "Background user report completed");
+                } catch (Exception e) {
+                    System.err.println("[Background] Error generating report: " + e.getMessage());
+                }
+            });
+
+            ConsoleUtils.printSuccess("Background report generation started. Type 'audit-log' to see completion.");
+        });
+
+        parser.registerCommand("report-matrix-async", "Generate permission matrix in background", (scanner, system) -> {
+            ConsoleUtils.printInfo("Starting background permission matrix generation...");
+
+            system.getBackgroundExecutor().submit(() -> {
+                try {
+                    String report = ReportGenerator.generatePermissionMatrixParallel(
+                            system.getUserManager(),
+                            system.getAssignmentManager()
+                    );
+
+                    System.out.println("\n[Background] Permission matrix generated:");
+                    System.out.println(report);
+
+                    system.getAuditLog().log("REPORT_GENERATED", system.getCurrentUser(), "matrix",
+                            "Background permission matrix completed");
+                } catch (Exception e) {
+                    System.err.println("[Background] Error generating matrix: " + e.getMessage());
+                }
+            });
+
+            ConsoleUtils.printSuccess("Background matrix generation started.");
+        });
+
+        parser.registerCommand("save-async", "Save data to file in background", (scanner, system) -> {
+            String filename = ConsoleUtils.promptString(scanner, "Filename to save: ", true);
+
+            ConsoleUtils.printInfo("Starting background save to " + filename);
+
+            system.getBackgroundExecutor().submit(() -> {
+                try {
+                    List<User> users = system.getUserManager().findAll();
+                    List<Role> roles = system.getRoleManager().findAll();
+                    List<RoleAssignment> assignments = system.getAssignmentManager().findAll();
+
+                    StringBuilder sb = new StringBuilder();
+                    sb.append("=== RBAC DATA BACKUP ===\n");
+                    sb.append("Generated: ").append(DateUtils.getCurrentDateTime()).append("\n\n");
+
+                    sb.append("--- USERS ---\n");
+                    for (User u : users) {
+                        sb.append(u.username()).append("|").append(u.fullName()).append("|").append(u.email()).append("\n");
+                    }
+
+                    sb.append("\n--- ROLES ---\n");
+                    for (Role r : roles) {
+                        sb.append(r.getName()).append("|").append(r.getDescription()).append("\n");
+                    }
+
+                    sb.append("\n--- ASSIGNMENTS ---\n");
+                    for (RoleAssignment ra : assignments) {
+                        sb.append(ra.user().username()).append("|")
+                                .append(ra.role().getName()).append("|")
+                                .append(ra.assignmentType()).append("|")
+                                .append(ra.isActive()).append("\n");
+                    }
+
+                    try (java.io.BufferedWriter writer = new java.io.BufferedWriter(new java.io.FileWriter(filename))) {
+                        writer.write(sb.toString());
+                    }
+
+                    system.getAuditLog().log("DATA_SAVED", system.getCurrentUser(), "system",
+                            "Background save to " + filename);
+
+                    System.out.println("[Background] Data saved to " + filename);
+                } catch (Exception e) {
+                    System.err.println("[Background] Error saving data: " + e.getMessage());
+                }
+            });
+
+            ConsoleUtils.printSuccess("Background save started.");
+        });
+
+        parser.registerCommand("load-async", "Load data from file in background", (scanner, system) -> {
+            String filename = ConsoleUtils.promptString(scanner, "Filename to load: ", true);
+
+            ConsoleUtils.printInfo("Starting background load from " + filename);
+
+            system.getBackgroundExecutor().submit(() -> {
+                try {
+                    java.io.File file = new java.io.File(filename);
+                    if (!file.exists()) {
+                        System.err.println("[Background] File not found: " + filename);
+                        return;
+                    }
+
+                    try (java.io.BufferedReader reader = new java.io.BufferedReader(new java.io.FileReader(file))) {
+                        String line;
+                        String section = "";
+                        while ((line = reader.readLine()) != null) {
+                            if (line.startsWith("---")) {
+                                section = line.replace("-", "").trim();
+                                continue;
+                            }
+                            if (line.isEmpty() || line.startsWith("===")) continue;
+
+                            if (section.equals("USERS")) {
+                                String[] parts = line.split("\\|");
+                                if (parts.length >= 3) {
+                                    try {
+                                        User user = User.validate(parts[0], parts[1], parts[2]);
+                                        system.getUserManager().add(user);
+                                    } catch (IllegalArgumentException e) {
+                                        // User might already exist
+                                    }
+                                }
+                            } else if (section.equals("ROLES")) {
+                                String[] parts = line.split("\\|");
+                                if (parts.length >= 2) {
+                                    try {
+                                        Role role = new Role(parts[0], parts[1]);
+                                        system.getRoleManager().add(role);
+                                    } catch (IllegalArgumentException e) {
+                                        // Role might already exist
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    system.getAuditLog().log("DATA_LOADED", system.getCurrentUser(), "system",
+                            "Background load from " + filename);
+
+                    System.out.println("[Background] Data loaded from " + filename);
+                } catch (Exception e) {
+                    System.err.println("[Background] Error loading data: " + e.getMessage());
+                }
+            });
+
+            ConsoleUtils.printSuccess("Background load started.");
+        });
+
+        parser.registerCommand("tasks-status", "Show background tasks status", (scanner, system) -> {
+            ConsoleUtils.printHeader("BACKGROUND TASKS STATUS");
+            System.out.println("Executor shutdown: " + system.getBackgroundExecutor().isShutdown());
+            System.out.println("Background executor is active and ready");
+            ConsoleUtils.printInfo("Use report-users-async, report-matrix-async, save-async, load-async for background operations");
+        });
     }
 
     private void registerUserCommands() {
@@ -170,20 +337,20 @@ public class CommandRegistry {
 
             if (choice.startsWith("By username")) {
                 input = ConsoleUtils.promptString(scanner, "Enter username part: ", true);
-                results = system.getUserManager().findByFilter(UserFilters.byUsernameContains(input));
+                results = system.getUserManager().findByFilterParallel(UserFilters.byUsernameContains(input));
             } else if (choice.startsWith("By email (contains)")) {
                 input = ConsoleUtils.promptString(scanner, "Enter email part: ", true);
-                results = system.getUserManager().findAll().stream()
+                results = system.getUserManager().findAll().parallelStream()
                         .filter(u -> u.email().toLowerCase().contains(input.toLowerCase()))
                         .collect(Collectors.toList());
             } else if (choice.startsWith("By email domain")) {
                 input = ConsoleUtils.promptString(scanner, "Enter domain (e.g., @example.com): ", true);
-                results = system.getUserManager().findAll().stream()
+                results = system.getUserManager().findAll().parallelStream()
                         .filter(u -> u.email().toLowerCase().endsWith(input.toLowerCase()))
                         .collect(Collectors.toList());
             } else {
                 input = ConsoleUtils.promptString(scanner, "Enter name part: ", true);
-                results = system.getUserManager().findByFilter(UserFilters.byFullNameContains(input));
+                results = system.getUserManager().findByFilterParallel(UserFilters.byFullNameContains(input));
             }
 
             ConsoleUtils.printHeader("SEARCH RESULTS");
@@ -365,14 +532,14 @@ public class CommandRegistry {
 
             if (choice.startsWith("By name")) {
                 String name = ConsoleUtils.promptString(scanner, "Enter name part: ", true);
-                results = system.getRoleManager().findByFilter(RoleFilters.byNameContains(name));
+                results = system.getRoleManager().findByFilterParallel(RoleFilters.byNameContains(name));
             } else if (choice.startsWith("Has permission")) {
                 String permName = ConsoleUtils.promptString(scanner, "Permission name: ", true);
                 String resource = ConsoleUtils.promptString(scanner, "Resource: ", true);
                 results = system.getRoleManager().findRolesWithPermission(permName, resource);
             } else {
                 int min = ConsoleUtils.promptInt(scanner, "Min number of permissions: ", 0, 100);
-                results = system.getRoleManager().findByFilter(RoleFilters.hasAtLeastNPermissions(min));
+                results = system.getRoleManager().findByFilterParallel(RoleFilters.hasAtLeastNPermissions(min));
             }
 
             ConsoleUtils.printHeader("SEARCH RESULTS");
@@ -416,7 +583,6 @@ public class CommandRegistry {
                     String expiresAt = ConsoleUtils.promptDate(scanner, "Expiration date");
                     boolean autoRenew = ConsoleUtils.promptYesNo(scanner, "Auto renew?");
 
-                    // Показываем предупреждение
                     String warning = DateUtils.getExpirationWarning(expiresAt);
                     if (warning.contains("WARNING") || warning.equals("EXPIRES TODAY")) {
                         ConsoleUtils.printError(warning);
