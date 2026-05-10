@@ -1,8 +1,8 @@
-package src.utils;
+package utils;
 
-import src.managers.UserManager;
-import src.managers.RoleManager;
-import src.managers.AssignmentManager;
+import managers.UserManager;
+import managers.RoleManager;
+import managers.AssignmentManager;
 import models.User;
 import models.Role;
 import models.RoleAssignment;
@@ -10,6 +10,7 @@ import models.Permission;
 
 import java.io.*;
 import java.util.*;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.stream.Collectors;
 
 public class ReportGenerator {
@@ -17,6 +18,7 @@ public class ReportGenerator {
     private ReportGenerator() {
     }
 
+    // Существующий метод (синхронный)
     public static String generateUserReport(UserManager userManager, AssignmentManager assignmentManager) {
         StringBuilder sb = new StringBuilder();
         sb.append(FormatUtils.formatHeader("USER REPORT"));
@@ -48,50 +50,51 @@ public class ReportGenerator {
         return sb.toString();
     }
 
-    public static String generateRoleReport(RoleManager roleManager, AssignmentManager assignmentManager) {
+    // НОВЫЙ: Параллельный метод для построения отчета по пользователям
+    public static String generateUserReportParallel(UserManager userManager, AssignmentManager assignmentManager) {
         StringBuilder sb = new StringBuilder();
-        sb.append(FormatUtils.formatHeader("ROLE REPORT"));
+        sb.append(FormatUtils.formatHeader("USER REPORT (PARALLEL)"));
         sb.append("\n\n");
 
-        List<Role> roles = roleManager.findAll();
+        List<User> users = userManager.findAll();
 
-        String[] headers = {"Role", "Permissions", "Users", "Active"};
-        List<String[]> rows = new ArrayList<>();
+        // Используем parallelStream для параллельной обработки пользователей
+        Map<String, String> userReports = users.parallelStream()
+                .collect(Collectors.toConcurrentMap(
+                        User::username,
+                        user -> {
+                            StringBuilder userSb = new StringBuilder();
+                            userSb.append(FormatUtils.formatBox("User: " + user.username())).append("\n");
+                            userSb.append(FormatUtils.formatKeyValue("Full Name", user.fullName())).append("\n");
+                            userSb.append(FormatUtils.formatKeyValue("Email", user.email())).append("\n");
 
-        for (Role role : roles) {
-            List<RoleAssignment> assignments = assignmentManager.findByRole(role);
-            long activeCount = assignments.stream().filter(RoleAssignment::isActive).count();
+                            List<RoleAssignment> assignments = assignmentManager.findByUser(user);
+                            if (assignments.isEmpty()) {
+                                userSb.append("Roles: No roles assigned\n");
+                            } else {
+                                userSb.append("Roles:\n");
+                                for (RoleAssignment ra : assignments) {
+                                    String status = ra.isActive() ? "ACTIVE" : "INACTIVE";
+                                    userSb.append(String.format("  - %s [%s] - %s\n",
+                                            ra.role().getName(), ra.assignmentType(), status));
+                                }
+                            }
+                            userSb.append("\n");
+                            return userSb.toString();
+                        }
+                ));
 
-            rows.add(new String[]{
-                    role.getName(),
-                    String.valueOf(role.getPermissions().size()),
-                    String.valueOf(assignments.size()),
-                    String.valueOf(activeCount)
-            });
-        }
-
-        sb.append(FormatUtils.formatTable(headers, rows)).append("\n\n");
-
-        for (Role role : roles) {
-            sb.append(FormatUtils.formatBox("Role: " + role.getName())).append("\n");
-            sb.append(FormatUtils.formatKeyValue("Description", role.getDescription())).append("\n");
-
-            List<RoleAssignment> assignments = assignmentManager.findByRole(role);
-            if (!assignments.isEmpty()) {
-                sb.append("Users with this role:\n");
-                for (RoleAssignment ra : assignments) {
-                    String status = ra.isActive() ? "ACTIVE" : "INACTIVE";
-                    sb.append(String.format("  - %s [%s]\n", ra.user().username(), status));
-                }
-            }
-            sb.append("\n");
+        // Собираем результаты в правильном порядке
+        for (User user : users) {
+            sb.append(userReports.get(user.username()));
         }
 
         sb.append(FormatUtils.formatSeparator()).append("\n");
-        sb.append(String.format("Total roles: %d\n", roles.size()));
+        sb.append(String.format("Total users: %d\n", users.size()));
         return sb.toString();
     }
 
+    // Существующий метод (синхронный)
     public static String generatePermissionMatrix(UserManager userManager, AssignmentManager assignmentManager) {
         StringBuilder sb = new StringBuilder();
         sb.append(FormatUtils.formatHeader("PERMISSION MATRIX"));
@@ -145,6 +148,110 @@ public class ReportGenerator {
 
         sb.append(FormatUtils.formatTable(headers, rows));
         sb.append("\n\nLegend: READ, WRITE, DELETE, MANAGE, etc.\n");
+        return sb.toString();
+    }
+
+    // НОВЫЙ: Параллельный метод для построения матрицы прав
+    public static String generatePermissionMatrixParallel(UserManager userManager, AssignmentManager assignmentManager) {
+        StringBuilder sb = new StringBuilder();
+        sb.append(FormatUtils.formatHeader("PERMISSION MATRIX (PARALLEL)"));
+        sb.append("\n\n");
+
+        List<User> users = userManager.findAll();
+
+        // Параллельно собираем все ресурсы и права пользователей
+        Set<String> allResources = ConcurrentHashMap.newKeySet();
+        Map<String, Set<String>> userPermissions = new ConcurrentHashMap<>();
+
+        users.parallelStream().forEach(user -> {
+            Set<Permission> perms = assignmentManager.getUserPermissions(user);
+            Set<String> permStrings = ConcurrentHashMap.newKeySet();
+            for (Permission p : perms) {
+                String key = p.name() + ":" + p.resource();
+                permStrings.add(key);
+                allResources.add(p.resource());
+            }
+            userPermissions.put(user.username(), permStrings);
+        });
+
+        List<String> sortedResources = new ArrayList<>(allResources);
+        Collections.sort(sortedResources);
+
+        String[] headers = new String[sortedResources.size() + 1];
+        headers[0] = "User";
+        for (int i = 0; i < sortedResources.size(); i++) {
+            headers[i + 1] = sortedResources.get(i);
+        }
+
+        // Параллельно строим строки таблицы
+        List<String[]> rows = users.parallelStream()
+                .map(user -> {
+                    String[] row = new String[sortedResources.size() + 1];
+                    row[0] = user.username();
+                    for (int i = 0; i < sortedResources.size(); i++) {
+                        String resource = sortedResources.get(i);
+                        Set<String> perms = userPermissions.get(user.username());
+                        if (perms != null) {
+                            List<String> userResourcePerms = perms.stream()
+                                    .filter(p -> p.endsWith(":" + resource))
+                                    .map(p -> p.split(":")[0])
+                                    .collect(Collectors.toList());
+                            row[i + 1] = userResourcePerms.isEmpty() ? "-" : String.join(",", userResourcePerms);
+                        } else {
+                            row[i + 1] = "-";
+                        }
+                    }
+                    return row;
+                })
+                .collect(Collectors.toList());
+
+        sb.append(FormatUtils.formatTable(headers, rows));
+        sb.append("\n\nLegend: READ, WRITE, DELETE, MANAGE, etc.\n");
+        return sb.toString();
+    }
+
+    // Существующие методы
+    public static String generateRoleReport(RoleManager roleManager, AssignmentManager assignmentManager) {
+        StringBuilder sb = new StringBuilder();
+        sb.append(FormatUtils.formatHeader("ROLE REPORT"));
+        sb.append("\n\n");
+
+        List<Role> roles = roleManager.findAll();
+
+        String[] headers = {"Role", "Permissions", "Users", "Active"};
+        List<String[]> rows = new ArrayList<>();
+
+        for (Role role : roles) {
+            List<RoleAssignment> assignments = assignmentManager.findByRole(role);
+            long activeCount = assignments.stream().filter(RoleAssignment::isActive).count();
+
+            rows.add(new String[]{
+                    role.getName(),
+                    String.valueOf(role.getPermissions().size()),
+                    String.valueOf(assignments.size()),
+                    String.valueOf(activeCount)
+            });
+        }
+
+        sb.append(FormatUtils.formatTable(headers, rows)).append("\n\n");
+
+        for (Role role : roles) {
+            sb.append(FormatUtils.formatBox("Role: " + role.getName())).append("\n");
+            sb.append(FormatUtils.formatKeyValue("Description", role.getDescription())).append("\n");
+
+            List<RoleAssignment> assignments = assignmentManager.findByRole(role);
+            if (!assignments.isEmpty()) {
+                sb.append("Users with this role:\n");
+                for (RoleAssignment ra : assignments) {
+                    String status = ra.isActive() ? "ACTIVE" : "INACTIVE";
+                    sb.append(String.format("  - %s [%s]\n", ra.user().username(), status));
+                }
+            }
+            sb.append("\n");
+        }
+
+        sb.append(FormatUtils.formatSeparator()).append("\n");
+        sb.append(String.format("Total roles: %d\n", roles.size()));
         return sb.toString();
     }
 
