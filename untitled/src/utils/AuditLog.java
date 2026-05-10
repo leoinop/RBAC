@@ -1,9 +1,10 @@
-package src.utils;
+package utils;
 
 import java.io.*;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.*;
+import java.util.concurrent.*;
 import java.util.stream.Collectors;
 
 public class AuditLog {
@@ -28,17 +29,44 @@ public class AuditLog {
     }
 
     private final List<AuditEntry> entries;
+    private final BlockingQueue<AuditEntry> queue;
+    private final ExecutorService consumerExecutor;
+    private volatile boolean running;
     private static final DateTimeFormatter FORMATTER = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
 
     public AuditLog() {
-        this.entries = new ArrayList<>();
+        this.entries = new CopyOnWriteArrayList<>();
+        this.queue = new LinkedBlockingQueue<>();
+        this.consumerExecutor = Executors.newSingleThreadExecutor(r -> {
+            Thread t = new Thread(r, "AuditLogConsumer");
+            t.setDaemon(true);
+            return t;
+        });
+        this.running = true;
+        startConsumer();
+    }
+
+    private void startConsumer() {
+        consumerExecutor.submit(() -> {
+            while (running) {
+                try {
+                    AuditEntry entry = queue.poll(1, TimeUnit.SECONDS);
+                    if (entry != null) {
+                        entries.add(entry);
+                        System.out.println("[AUDIT] " + entry.format());
+                    }
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    break;
+                }
+            }
+        });
     }
 
     public void log(String action, String performer, String target, String details) {
         String timestamp = LocalDateTime.now().format(FORMATTER);
         AuditEntry entry = new AuditEntry(timestamp, action, performer, target, details);
-        entries.add(entry);
-        System.out.println("[AUDIT] " + entry.format());
+        queue.offer(entry);
     }
 
     public List<AuditEntry> getAll() {
@@ -114,5 +142,10 @@ public class AuditLog {
 
     public int size() {
         return entries.size();
+    }
+
+    public void shutdown() {
+        running = false;
+        consumerExecutor.shutdown();
     }
 }
